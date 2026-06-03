@@ -1,6 +1,6 @@
 // service-worker.js — Gestión de Horas EPMS
 // VERSIÓN: v5 — actualizar este número con cada deploy para forzar refresh
-const CACHE_NAME = 'epms-horas-v5';
+const CACHE_NAME = 'epms-horas-v6';
 
 const STATIC_ASSETS = [
   './',

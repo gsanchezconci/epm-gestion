@@ -535,6 +535,21 @@
   }
   tbody tr:hover .del-btn { opacity: 1; }
   .del-btn:hover { background: rgba(248,113,113,.25); opacity: 1; border-color: rgba(248,113,113,.7); }
+  .edit-btn {
+    padding: 4px 9px;
+    border-radius: 5px;
+    border: 1px solid rgba(108,143,255,.3);
+    background: rgba(108,143,255,.08);
+    color: var(--accent);
+    cursor: pointer;
+    font-size: 11px;
+    opacity: 0.5;
+    transition: all .15s;
+    margin-right: 4px;
+  }
+  tbody tr:hover .edit-btn { opacity: 1; }
+  .edit-btn:hover { background: rgba(108,143,255,.2); opacity: 1; border-color: var(--accent); }
+  .action-cell { white-space: nowrap; }
 
 
 
@@ -1639,7 +1654,10 @@ function rebuildColors() {
 }
 
 function getMonth(dateStr) {
-  const d = new Date(dateStr);
+  // Parsear como hora local (no UTC) para evitar el bug de timezone:
+  // '2026-06-01' sin sufijo T se interpreta como UTC medianoche →
+  // en Argentina (UTC-3) eso cae en 31/05, asignando el mes incorrecto.
+  const d = new Date(dateStr + 'T00:00:00');
   return MONTH_ORDER[d.getMonth()];
 }
 
@@ -1973,12 +1991,13 @@ function renderProjects() {
           <div class="section-divider"></div>
         </div>
         ${pRows.length ? `<div class="table-wrap"><table>
-          <thead><tr><th>Fecha</th><th>Colaborador</th><th>Descripción</th><th class="right">Horas</th></tr></thead>
+          <thead><tr><th>Fecha</th><th>Colaborador</th><th>Descripción</th><th class="right">Horas</th><th></th></tr></thead>
           <tbody>${pRows.map(r=>`<tr>
             <td style="color:var(--text3);white-space:nowrap">${formatDate(r.d)}</td>
             <td><span style="color:${COLLAB_COLORS[r.c]||'#6c8fff'};font-weight:500">${r.c.split(' ')[0]}</span></td>
             <td class="desc-cell">${r.desc||'—'}</td>
             <td class="right" style="font-weight:600">${r.h}</td>
+            <td class="action-cell"><button class="edit-btn" onclick="editEntry('${r.id||''}')">✎</button><button class="del-btn" onclick="deleteEntry('${r.id||''}')">✕</button></td>
           </tr>`).join('')}</tbody></table></div>`
         : `<div class="empty"><div class="empty-icon">📭</div><p>Sin registros para este período</p></div>`}
       </div>`;
@@ -2018,12 +2037,13 @@ function renderProjects() {
           </div>
           <div class="month-group-body ${isCurrent ? 'open' : ''}" id="body-${uid}">
             <div class="table-wrap" style="border-radius:0"><table>
-              <thead><tr><th>Fecha</th><th>Colaborador</th><th>Descripción</th><th class="right">Horas</th></tr></thead>
+              <thead><tr><th>Fecha</th><th>Colaborador</th><th>Descripción</th><th class="right">Horas</th><th></th></tr></thead>
               <tbody>${mRows.map(r=>`<tr>
                 <td style="color:var(--text3);white-space:nowrap">${formatDate(r.d)}</td>
                 <td><span style="color:${COLLAB_COLORS[r.c]||'#6c8fff'};font-weight:500">${r.c.split(' ')[0]}</span></td>
                 <td class="desc-cell">${r.desc||'—'}</td>
                 <td class="right" style="font-weight:600">${r.h}</td>
+                <td class="action-cell"><button class="edit-btn" onclick="editEntry('${r.id||''}')">✎</button><button class="del-btn" onclick="deleteEntry('${r.id||''}')">✕</button></td>
               </tr>`).join('')}</tbody>
             </table></div>
           </div>
@@ -2089,7 +2109,7 @@ function renderCollab(name) {
               <td><span class="badge ${projClass(r.p)}">${r.p}</span></td>
               <td class="desc-cell">${r.desc||'—'}</td>
               <td class="right" style="font-weight:600">${r.h}</td>
-              <td><button class="del-btn" onclick="deleteEntry('${r.id||''}')">✕</button></td>
+              <td class="action-cell"><button class="edit-btn" onclick="editEntry('${r.id||''}')">✎</button><button class="del-btn" onclick="deleteEntry('${r.id||''}')">✕</button></td>
             </tr>`).join('')}</tbody>
           </table></div>
         </div>
@@ -2112,7 +2132,7 @@ function renderRecent() {
       <td><span class="badge ${projClass(r.p)}">${r.p}</span></td>
       <td class="desc-cell">${r.desc||'—'}</td>
       <td class="right" style="font-weight:600">${r.h}</td>
-      <td>${(!currentUser||currentUser.role==='admin'||r.c===currentUser.name)?`<button class="del-btn" onclick="deleteEntry('${r.id||''}')" style="opacity:.7">✕</button>`:''}</td>
+      <td>${(!currentUser||currentUser.role==='admin'||r.c===currentUser.name)?`<button class="edit-btn" onclick="editEntry('${r.id||''}')" style="opacity:.7">✎</button><button class="del-btn" onclick="deleteEntry('${r.id||''}')" style="opacity:.7">✕</button>`:''}</td>
     </tr>`).join('')}${!recent.length?'<tr><td colspan="6"><div class="empty"><div class="empty-icon">📭</div><p>Sin registros</p></div></td></tr>':''}</tbody>
   </table>`;
 }
@@ -2326,8 +2346,104 @@ async function _confirmDelete(id) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// UI HELPERS
+// EDITAR REGISTRO
 // ═══════════════════════════════════════════════════════════════
+function editEntry(id) {
+  if (!id) { showToast('❌ Este registro no tiene ID', '#f87171'); return; }
+  const entry = DATA.find(r => r.id === id);
+  if (!entry) { showToast('❌ Registro no encontrado', '#f87171'); return; }
+
+  // Colaboradores solo pueden editar sus propios registros
+  if (currentUser && currentUser.role === 'colab' && entry.c !== currentUser.name) {
+    showToast('⚠️ Solo podés editar tus propios registros', '#fb923c'); return;
+  }
+
+  const isColab = currentUser && currentUser.role === 'colab';
+  const colabOptions = isColab
+    ? `<option value="${entry.c}" selected>${entry.c}</option>`
+    : COLLABS.map(c => `<option value="${c}" ${c === entry.c ? 'selected' : ''}>${c}</option>`).join('');
+
+  const projOptions = PROJECTS.map(p => `<option value="${p}" ${p === entry.p ? 'selected' : ''}>${p}</option>`).join('');
+
+  const body = `
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="form-group">
+        <label>Colaborador</label>
+        <select id="edit-colab" ${isColab ? 'disabled style="opacity:.6"' : ''}
+          style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:DM Sans,sans-serif;font-size:13px;padding:9px 12px;outline:none">
+          ${colabOptions}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Fecha</label>
+        <input type="date" id="edit-fecha" value="${entry.d}"
+          style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:DM Sans,sans-serif;font-size:13px;padding:9px 12px;outline:none;color-scheme:dark">
+      </div>
+      <div class="form-group">
+        <label>Proyecto</label>
+        <select id="edit-proyecto"
+          style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:DM Sans,sans-serif;font-size:13px;padding:9px 12px;outline:none">
+          ${projOptions}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Horas</label>
+        <input type="number" id="edit-horas" value="${entry.h}" min="0.5" max="24" step="0.5"
+          style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:DM Sans,sans-serif;font-size:13px;padding:9px 12px;outline:none">
+      </div>
+      <div class="form-group">
+        <label>Descripción</label>
+        <textarea id="edit-desc" rows="3"
+          style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:DM Sans,sans-serif;font-size:13px;padding:9px 12px;outline:none;resize:vertical">${entry.desc||''}</textarea>
+      </div>
+    </div>`;
+
+  openModal('✏️ Editar registro', body, [
+    { label: 'Cancelar', fn: 'closeModal()' },
+    { label: '✓ Guardar cambios', fn: `_confirmEdit('${id}')`, primary: true }
+  ]);
+}
+
+async function _confirmEdit(id) {
+  const entry = DATA.find(r => r.id === id);
+  if (!entry) { closeModal(); return; }
+
+  const isColab = currentUser && currentUser.role === 'colab';
+  const colab   = isColab ? entry.c : (document.getElementById('edit-colab')?.value || entry.c);
+  const fecha   = document.getElementById('edit-fecha')?.value;
+  const proj    = document.getElementById('edit-proyecto')?.value;
+  const horas   = parseFloat(document.getElementById('edit-horas')?.value);
+  const desc    = document.getElementById('edit-desc')?.value?.trim() || '';
+
+  if (!fecha || !proj || !horas || isNaN(horas)) {
+    showToast('❌ Completá todos los campos', '#f87171'); return;
+  }
+
+  const updated = { ...entry, c: colab, d: fecha, p: proj, h: horas, desc };
+
+  closeModal();
+
+  if (IS_FIREBASE) {
+    try {
+      await fb_saveEntry(updated);
+      logActivity('save', `Registro editado: ${horas}h en "${proj}" (${colab}) — ${desc ? desc.slice(0,50) : 'sin descripción'}`);
+      showToast('✓ Registro actualizado');
+    } catch(e) {
+      showToast('❌ Error al guardar: ' + e.message, '#f87171');
+    }
+  } else {
+    const idx = DATA.findIndex(r => r.id === id);
+    if (idx !== -1) DATA[idx] = updated;
+    local_save();
+    renderAll();
+    if (currentCollab) renderCollab(currentCollab);
+    renderRecent();
+    logActivity('save', `Registro editado: ${horas}h en "${proj}" (${colab}) — ${desc ? desc.slice(0,50) : 'sin descripción'}`);
+    showToast('✓ Registro actualizado');
+  }
+}
+
+
 function openModal(title, body, actions) {
   document.getElementById('modal-title').textContent = title;
   document.getElementById('modal-body').innerHTML = body;
@@ -2436,7 +2552,7 @@ function exportarExcel() {
   // ══════════════════════════════════════════════════════════════
   const datosRows = [['Colaborador','Mes','Proyecto','Horas','Fecha','Descripcion']];
   allData.forEach(r => {
-    const mes = MONTH_ORDER[new Date(r.d).getMonth()] + ' 2026';
+    const mes = MONTH_ORDER[new Date(r.d + 'T00:00:00').getMonth()] + ' 2026';
     datosRows.push([r.c, mes, r.p, r.h, r.d, r.desc||'']);
   });
   const wsDatos = XLSX.utils.aoa_to_sheet(datosRows);
@@ -2456,7 +2572,7 @@ function exportarExcel() {
   // (the app lets user filter per month; Excel shows annual summary)
 
   function buildDashboardSheet(filterMonth) {
-    const rows = filterMonth === 'all' ? allData : allData.filter(r => MONTH_ORDER[new Date(r.d).getMonth()] === filterMonth);
+    const rows = filterMonth === 'all' ? allData : allData.filter(r => MONTH_ORDER[new Date(r.d + 'T00:00:00').getMonth()] === filterMonth);
     const label = filterMonth === 'all' ? 'ANUAL 2026' : filterMonth + ' 2026';
 
     const totalH     = rows.reduce((s,r)=>s+r.h,0);
